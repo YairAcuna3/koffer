@@ -60,7 +60,7 @@ export const ProjectCardContent = forwardRef<HTMLDivElement, ProjectCardProps & 
                     <div className="flex items-center gap-2">
                         <div
                             {...dragHandleProps}
-                            className="cursor-grab active:cursor-grabbing text-text-muted hover:text-text-primary p-1 shrink-0"
+                            className="cursor-grab active:cursor-grabbing text-text-muted hover:text-text-primary p-1 shrink-0 touch-none"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                                 <circle cx="9" cy="6" r="1.5" />
@@ -134,7 +134,7 @@ export const ProjectCardContent = forwardRef<HTMLDivElement, ProjectCardProps & 
                     {/* Drag handle */}
                     <div
                         {...dragHandleProps}
-                        className="cursor-grab active:cursor-grabbing text-text-muted hover:text-text-primary p-1"
+                        className="cursor-grab active:cursor-grabbing text-text-muted hover:text-text-primary p-1 touch-none"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                             <circle cx="9" cy="6" r="1.5" />
