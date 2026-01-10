@@ -40,6 +40,7 @@ export async function GET(request: Request) {
   else if (sortBy === "name") orderBy.name = sortOrder;
   else if (sortBy === "startAt") orderBy.startAt = sortOrder;
   else if (sortBy === "endAt") orderBy.endAt = sortOrder;
+  else if (sortBy === "lastUpdateAt") orderBy.lastUpdateAt = sortOrder;
   else if (sortBy === "state") orderBy.state = sortOrder;
   else if (sortBy === "type") orderBy.type = sortOrder;
   else orderBy.createdAt = sortOrder;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
@@ -23,12 +23,31 @@ import ProjectCard, { Project } from "@/app/components/ProjectCard";
 import ProjectModal from "@/app/components/ProjectModal";
 import Toast from "@/app/components/Toast";
 
+// Hook personalizado para debounce
+function useDebounce<T>(value: T, delay: number): T {
+    const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            setDebouncedValue(value);
+        }, delay);
+
+        return () => clearTimeout(handler);
+    }, [value, delay]);
+
+    return debouncedValue;
+}
+
+// Cache de proyectos por parámetros de búsqueda
+type ProjectCache = Map<string, Project[]>;
+
 export default function ProjectsPage() {
     const { status } = useSession();
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<"consider" | "other" | "finished">("consider");
     const [projects, setProjects] = useState<Project[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [initialLoading, setInitialLoading] = useState(true);
+    const [isFetching, setIsFetching] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
     const [editingProject, setEditingProject] = useState<Project | null>(null);
     const [toast, setToast] = useState<{ message: string; type: "success" | "error"; isVisible: boolean }>({
@@ -44,6 +63,17 @@ export default function ProjectsPage() {
     const [filterState, setFilterState] = useState("");
     const [filterType, setFilterType] = useState("");
     const [filterTag, setFilterTag] = useState("");
+
+    // Debounce para búsqueda y tag (300ms)
+    const debouncedSearch = useDebounce(search, 300);
+    const debouncedFilterTag = useDebounce(filterTag, 300);
+
+    // Indicador de que hay una búsqueda pendiente
+    const isSearchPending = search !== debouncedSearch || filterTag !== debouncedFilterTag;
+
+    // Cache de proyectos y ref para evitar fetch duplicados
+    const projectCache = useRef<ProjectCache>(new Map());
+    const lastFetchParams = useRef<string>("");
 
     const sensors = useSensors(
         useSensor(PointerSensor, {
@@ -68,28 +98,66 @@ export default function ProjectsPage() {
         }
     }, [status, router]);
 
-    const fetchProjects = useCallback(async () => {
+    // Parámetros de fetch memorizados para evitar recálculos innecesarios
+    const fetchParams = useMemo(() => {
         const params = new URLSearchParams({
-            search,
+            search: debouncedSearch,
             sortBy,
             sortOrder,
             state: activeTab === "finished" ? "Terminado" : filterState,
             type: filterType,
-            tag: filterTag,
+            tag: debouncedFilterTag,
         });
 
-        // Solo agregar isConsider para tabs "consider" y "other"
         if (activeTab !== "finished") {
             params.set("isConsider", (activeTab === "consider").toString());
         }
 
-        const res = await fetch(`/api/projects?${params}`);
-        if (res.ok) {
-            const data = await res.json();
-            setProjects(data);
+        return params.toString();
+    }, [activeTab, debouncedSearch, sortBy, sortOrder, filterState, filterType, debouncedFilterTag]);
+
+    const fetchProjects = useCallback(async (forceRefresh = false) => {
+        // Evitar fetch duplicados si los parámetros no cambiaron
+        if (!forceRefresh && lastFetchParams.current === fetchParams) {
+            return;
         }
-        setLoading(false);
-    }, [activeTab, search, sortBy, sortOrder, filterState, filterType, filterTag]);
+
+        lastFetchParams.current = fetchParams;
+
+        // Si hay cache y no es refresh forzado, usar cache inmediatamente
+        const cached = projectCache.current.get(fetchParams);
+        if (cached && !forceRefresh) {
+            setProjects(cached);
+            setInitialLoading(false);
+            return;
+        }
+
+        // Si no hay cache, limpiar proyectos y mostrar loading
+        if (!cached) {
+            setProjects([]);
+            setInitialLoading(true);
+        }
+
+        setIsFetching(true);
+
+        try {
+            const res = await fetch(`/api/projects?${fetchParams}`);
+            if (res.ok) {
+                const data = await res.json();
+                // Guardar en cache
+                projectCache.current.set(fetchParams, data);
+                setProjects(data);
+            }
+        } finally {
+            setInitialLoading(false);
+            setIsFetching(false);
+        }
+    }, [fetchParams]);
+
+    // Invalidar cache cuando se modifica un proyecto
+    const invalidateCache = useCallback(() => {
+        projectCache.current.clear();
+    }, []);
 
     useEffect(() => {
         if (status === "authenticated") {
@@ -110,6 +178,9 @@ export default function ProjectsPage() {
 
             // Actualizar orden local inmediatamente
             setProjects(newProjects);
+
+            // Actualizar cache con el nuevo orden
+            projectCache.current.set(fetchParams, newProjects);
 
             // Guardar nuevo orden en el servidor
             const projectIds = newProjects.map((p) => p.id);
@@ -154,7 +225,8 @@ export default function ProjectsPage() {
                     type: "success",
                     isVisible: true,
                 });
-                fetchProjects();
+                invalidateCache();
+                fetchProjects(true);
                 return true;
             } else {
                 setToast({
@@ -179,7 +251,8 @@ export default function ProjectsPage() {
 
         const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
         if (res.ok) {
-            fetchProjects();
+            invalidateCache();
+            fetchProjects(true);
         }
     };
 
@@ -193,19 +266,26 @@ export default function ProjectsPage() {
         setModalOpen(true);
     };
 
-    if (status === "loading" || loading) {
+    // Drag habilitado cuando: ordenado por "order", sin búsqueda, sin filtro de tag
+    // Permitimos drag con filtro de tipo porque el orden se mantiene dentro del subset filtrado
+    // Para el tab "other", el filtro de estado por defecto es "Sin iniciar", así que lo permitimos
+    const isDefaultStateFilter = activeTab === "other" ? filterState === "Sin iniciar" : !filterState;
+    const isDragEnabled = useMemo(() =>
+        sortBy === "order" && !debouncedSearch && isDefaultStateFilter && !debouncedFilterTag && activeTab !== "finished",
+        [sortBy, debouncedSearch, isDefaultStateFilter, debouncedFilterTag, activeTab]
+    );
+
+    // Memorizar la lista de proyectos para evitar re-renders innecesarios
+    const projectList = useMemo(() => projects, [projects]);
+
+    // Solo mostrar pantalla de carga en la carga inicial
+    if (status === "loading" || initialLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <p className="text-text-muted">Cargando...</p>
             </div>
         );
     }
-
-    // Drag habilitado cuando: ordenado por "order", sin búsqueda, sin filtro de tag
-    // Permitimos drag con filtro de tipo porque el orden se mantiene dentro del subset filtrado
-    // Para el tab "other", el filtro de estado por defecto es "Sin iniciar", así que lo permitimos
-    const isDefaultStateFilter = activeTab === "other" ? filterState === "Sin iniciar" : !filterState;
-    const isDragEnabled = sortBy === "order" && !search && isDefaultStateFilter && !filterTag && activeTab !== "finished";
 
     return (
         <div className="max-w-6xl mx-auto p-4 sm:p-6">
@@ -252,7 +332,7 @@ export default function ProjectsPage() {
                 <button
                     onClick={() => {
                         setActiveTab("finished");
-                        setSortBy("endAt");
+                        setSortBy("lastUpdateAt");
                         setSortOrder("desc");
                     }}
                     className={`px-3 sm:px-4 py-2 rounded-lg transition text-sm sm:text-base ${activeTab === "finished"
@@ -279,10 +359,11 @@ export default function ProjectsPage() {
                 filterTag={filterTag}
                 setFilterTag={setFilterTag}
                 hideStateFilter={activeTab === "finished"}
+                isSearchPending={isSearchPending || isFetching}
             />
 
             {/* Lista de proyectos */}
-            {projects.length === 0 ? (
+            {projectList.length === 0 ? (
                 <div className="text-center py-12 text-text-muted">
                     <p>No hay proyectos en esta categoría</p>
                 </div>
@@ -293,11 +374,11 @@ export default function ProjectsPage() {
                     onDragEnd={handleDragEnd}
                 >
                     <SortableContext
-                        items={projects.map((p) => p.id)}
+                        items={projectList.map((p) => p.id)}
                         strategy={verticalListSortingStrategy}
                     >
                         <div className="flex flex-col gap-3">
-                            {projects.map((project) => (
+                            {projectList.map((project) => (
                                 <ProjectCard
                                     key={project.id}
                                     project={project}
@@ -310,7 +391,7 @@ export default function ProjectsPage() {
                 </DndContext>
             ) : (
                 <div className="flex flex-col gap-3">
-                    {projects.map((project) => (
+                    {projectList.map((project) => (
                         <ProjectCard
                             key={project.id}
                             project={project}

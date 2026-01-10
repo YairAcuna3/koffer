@@ -22,6 +22,7 @@ export interface Project {
     type: string | null;
     startAt: string | null;
     endAt: string | null;
+    lastUpdateAt: string | null;
     state: string;
     description: string | null;
     notes: string | null;
@@ -92,7 +93,13 @@ export const ProjectCardContent = forwardRef<HTMLDivElement, ProjectCardProps & 
                     {/* Dates row */}
                     <div className="flex gap-4 text-xs text-text-muted">
                         <span>Inicio: {formatDate(project.startAt)}</span>
-                        <span>Fin: {formatDate(project.endAt)}</span>
+                        {project.state === "Terminado" && project.lastUpdateAt && project.lastUpdateAt !== project.endAt ? (
+                            <span className="text-blue-400">
+                                Actualizado: {formatDate(project.lastUpdateAt)}
+                            </span>
+                        ) : (
+                            <span>Fin: {formatDate(project.endAt)}</span>
+                        )}
                     </div>
 
                     {/* Tags */}
@@ -171,7 +178,13 @@ export const ProjectCardContent = forwardRef<HTMLDivElement, ProjectCardProps & 
                     {/* Dates */}
                     <div className="hidden md:flex gap-4 text-xs text-text-muted shrink-0">
                         <span>Inicio: {formatDate(project.startAt)}</span>
-                        <span>Fin: {formatDate(project.endAt)}</span>
+                        {project.state === "Terminado" && project.lastUpdateAt && project.lastUpdateAt !== project.endAt ? (
+                            <span className="text-blue-400">
+                                Actualizado: {formatDate(project.lastUpdateAt)}
+                            </span>
+                        ) : (
+                            <span>Fin: {formatDate(project.endAt)}</span>
+                        )}
                     </div>
 
                     {/* Tags */}

@@ -76,10 +76,17 @@ export async function PUT(
   const stateChanged =
     projectData.state && projectData.state !== existingProject.state;
 
+  // Calcular lastUpdateAt si el nuevo estado es "Terminado"
+  let lastUpdateAt: Date | undefined;
+  if (stateChanged && projectData.state === "Terminado") {
+    lastUpdateAt = new Date();
+  }
+
   const project = await prisma.project.update({
     where: { id },
     data: {
       ...projectData,
+      ...(lastUpdateAt && { lastUpdateAt }),
       tags: {
         set: [],
         connectOrCreate:
